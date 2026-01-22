@@ -1,0 +1,1264 @@
+on script load:
+    if {server::deathcore::plugins::*} doesn't contain "LifeCore":
+        add "LifeCore" to {server::deathcore::plugins::*}
+    wait 5 seconds
+    if {server::deathcore::plugins::*} doesn't contain "EasyEco":
+        send "&2&lEnable EasyECO&2 by DeathCore skripts to enable economy features!"
+options:
+    rtp-min: -5000
+    rtp-max: 5000
+    rtp-world: world
+    rtp-cooldown: 60 # seconds
+
+variables:
+    {lc::settings::heart_steal_chance} = 100
+    {lc::settings::heart_steal_count} = 1
+    {lc::settings::allow_pvp} = false
+    {lc::settings::allow_clans} = true
+    {lc::settings::allow_friendlyfire} = false
+    {lc::settings::allow_back} = false
+    {lc::settings::loss_type} = "drop" # drop or give
+    {lc::settings::lose_on} = "player" # "player" (when killed by player), "any" (when killed any way)
+    {lc::settings::allow_heart_loss} = true
+    {lc::server::name} = "Our Lifesteal SMP"
+
+on join:
+    wait 5 ticks
+    if {lc::vault::%uuid of player%::vaultsize} isn't set:
+        set {lc::vault::%uuid of player%::vaultsize} to 1
+
+    if plugin "Skore" isn't enabled:
+        if player has permission "op":
+            send "&cEnable Skore (skript-skoreboards) for enhanced features!" to player
+    else:
+        setup skoreboard for player
+        set title of skoreboard player to "&c%{lc::server::name}%"
+        
+every second:
+    loop all players:
+        set title of skoreboard loop-value to "&c%{lc::server::name}%"
+        set slot 1 of skoreboard loop-value to "&2Clan: &e%{lc::%uuid of loop-value%::clan}%"
+        set slot 2 of skoreboard loop-value to ""
+        set slot 3 of skoreboard loop-value to "&2Cash: $&6%{eco::currency::cash::%uuid of loop-value%::balance}%"
+        set slot 4 of skoreboard loop-value to "&4Kills: &6%{eco::currency::kills::%uuid of loop-value%::balance}%"
+        set slot 5 of skoreboard loop-value to ""
+        set {_next} to 30 - {lc::%uuid of loop-value%::playtime}
+        set slot 6 of skoreboard loop-value to "&2Next reward in &e%{_next}% minutes!"
+        
+command /spawn:
+    description: Teleport to the world spawn
+    cooldown: 1 minute
+    cooldown message: You can use this command again in &e%remaining time%&r!
+    trigger:
+        set {_spawn} to spawn
+        add 3 to the y-coord of {_spawn}
+        teleport(player, {_spawn})
+
+every minute:
+    loop all players:
+        add 1 to {lc::%uuid of loop-value%::playtime}
+        if {lc::%uuid of loop-value%::playtime} is 30:
+            send "&2Thanks for playing! here is &2$50&r for you!" to loop-value
+            execute CONSOLE command "addcurrency cash 50 %loop-value%"
+            set {lc::%uuid of loop-value%::playtime} to 0
+
+on first join:
+    wait 5 ticks
+    send "&2Thanks for playing! here is &2$100&r to get you started!" to player
+
+function stripColors(string: string) :: string:
+    set {_str} to {_string}
+    set {_codes::*} to "&0", "&1", "&2", "&3", "&4", "&5", "&6", "&7", "&8", "&9", "&a", "&b", "&c", "&d", "&e", "&f", "&k", "&l", "&m", "&n", "&o", "&r"
+    loop {_codes::*}:
+        replace all loop-value in {_str} with ""
+    return {_str}
+
+function toggleVar(v: object) :: object:
+    if {_v} is true:
+        set {_v} to false
+        return {_v}
+    else:
+        set {_v} to true
+        return {_v}
+
+# Main Settings gui
+command /lc [<text>]:
+    permission: lc.panel
+    description: Open LifeCore's Settings
+    aliases: lifesteal, lifestealcore, lifecore
+    trigger:
+        set {_arg_1} to arg-1
+        if {_arg_1} is set:
+            if {_arg_1} is "help":
+                make player execute command "lchelp"
+                stop
+            send "&cUsage: /lc [help]"
+            stop
+        set {_panel} to a new chest inventory with 6 rows named "LifeCore - Home"
+        set metadata value "core" of {_panel} to true
+        set slot 0 of {_panel} to a barrier named "Close"
+        set slot 10 of {_panel} to a nether star named "Heart Management"
+        set slot 12 of {_panel} to player's skull named "Clan Settings"
+        open {_panel} to player
+
+function openCoreSettings(page: number, player: player):
+    if {_page} is 0:
+        make {_player} execute command "lc"
+    else if {_page} is 1: # Heart Management
+        set {_page} to a new chest inventory with 6 rows named "LifeCore - Hearts"
+        set metadata value "core" of {_page} to true
+        set slot 0 of {_page} to a barrier named "Back"
+        if {lc::settings::allow_heart_loss} is true:
+            set slot 10 of {_page} to lime wool named "Disable LifeSteal" with lore "&2Hearts can be lost!"
+        else:
+            set slot 10 of {_page} to red wool named "Enable LifeSteal" with lore "&cHearts can not be lost!"
+        set slot 12 of {_page} to lime wool named "&2Chance to lose a heart (0-100)" with lore "&2Click to change"
+        set slot 14 of {_page} to lime wool named "&2Heart loss count (Heart loss on death)" with lore "&2Click to change"
+    else if {_page} is 2: # Clan Settings
+        set {_page} to a new chest inventory with 6 rows named "LifeCore - Clans"
+        set slot 0 of {_page} to a barrier named "Back"
+        if {lc::settings::allow_friendlyfire} is true:
+            set slot 10 of {_page} to lime wool named "Disable Friendly Fire" with lore "&cClan members can attack each other!"
+        else:
+            set slot 10 of {_page} to red wool named "Enable Friendly Fire" with lore "&2Clan members cannot attack each other!"
+    open {_page} to {_player}
+
+
+on inventory click:
+    if name of event-inventory is "LifeCore - Home":
+        cancel event
+        if event-slot is 0:
+            close the player's inventory
+        else if event-slot is 10:
+            openCoreSettings(1, player)
+        else if event-slot is 12:
+            openCoreSettings(2, player)
+
+    else if name of event-inventory is "LifeCore - Hearts":
+        cancel event
+        if event-slot is 10:
+            set {_new} to toggleVar({lc::settings::allow_heart_loss})
+            set {lc::settings::allow_heart_loss} to {_new}
+            if {lc::settings::allow_heart_loss} is true:
+                broadcast "&2Heart loss is now &e&lENABLED!"
+            else:
+                broadcast "&2Heart loss is now &e&lDISABLED!"
+            openCoreSettings(1, player)
+        else if event-slot is 12:
+            set {lc::%uuid of player%::waitingfor} to "heart_steal_chance"
+            close the player's inventory
+            send "&eEnter a %% (0-100)"
+        else if event-slot is 14:
+            set {lc::%uuid of player%::waitingfor} to "heart_steal_count"
+            close the player's inventory
+            send "&eEnter the number of hearts that player's will lose on death"
+
+    else if name of event-inventory is "LifeCore - Clans":
+        cancel event
+        if event-slot is 0:
+            openCoreSettings(0, player)
+        else if event-slot is 10:
+            set {_new} to toggleVar({lc::settings::allow_friendlyfire})
+            if {_new} is true:
+                broadcast "&cFriendly Fire Enabled!"
+            else:
+                broadcast "&2Friendly Fire Disabled!"
+            set {lc::settings::allow_friendlyfire} to {_new}
+            openCoreSettings(2, player)
+command /remheart <player> [<number>]:
+    permission: lc.hearts.remheart
+    aliases: removeheart, loseheart
+    description: Remove hearts from a player
+    trigger:
+        set {_p} to arg-1
+        set {_count} to arg-2
+
+        if {_count} isn't set:
+            set {_count} to 1
+        
+        set {_prev} to max health of {_p}
+        set {_new} to {_prev} - {_count}
+        set max health of {_p} to {_new}
+
+
+command /addheart <player> [<number>]:
+    permission: lc.hearts.addheart
+    aliases: addheart
+    description: Add hearts to a player
+    trigger:
+        set {_p} to arg-1
+        set {_count} to arg-2
+
+        if {_count} isn't set:
+            set {_count} to 1
+        
+        set {_prev} to max health of {_p}
+        set {_new} to {_prev} + {_count}
+        set max health of {_p} to {_new}
+
+on death of player:
+    set {_attacker} to attacker
+    set {_victim} to victim
+    if {lc::settings::allow_heart_loss} is true:
+        execute CONSOLE command "remheart %{_victim}% %{lc::settings::heart_steal_count}%"
+        if {lc::settings::lose_on} is "player":
+            if {_attacker} is a player:
+                set {_num} to a random integer between 0 and 100
+                if {_num} <= {lc::settings::heart_steal_chance}:
+                    if {lc::settings::loss_type} is "drop":
+                        loop {lc::settings::heart_steal_count} times:
+                            drop a nether star named "&cHeart" with lore "&1Tier 1"
+                            set metadata value "tier" of last dropped item to 1
+                else:
+                    send "&cYou killed %{_victim}% but didn't gain a heart!" to {_attacker}
+                    send "&2%{_attacker}% killed you but you didn't lose any hearts!" to {_victim}
+        else:
+            set {_num} to a random integer between 0 and 100
+            if {_num} <= {lc::settings::heart_steal_chance}:
+                if {lc::settings::loss_type} is "drop":
+                    loop {lc::settings::heart_steal_count} times:
+                        drop a nether star named "&cHeart" with lore "&1Tier 1"
+                        set metadata value "tier" of last dropped item to 1
+                    execute CONSOLE command "remheart %{_victim}% %{lc::settings::heart_steal_count}%"
+            else:
+                send "&cYou killed %{_victim}% but didn't gain a heart!" to {_attacker}
+                send "&2%{_attacker}% killed you but you didn't lose any hearts!" to {_victim}
+    else:
+        send "&cYou killed %{_victim}% but didn't gain a heart!" to {_attacker}
+        send "&2%{_attacker}% killed you but you didn't lose any hearts!" to {_victim}
+
+    if {server::deathcore::plugins::*} contains "EasyEco":
+        execute CONSOLE command "addcurrency kills 1 %{_attacker}%"
+        execute CONSOLE command "addcurrency cash 100 %{_attacker}%"
+
+
+
+on right click:
+    if player's tool is nether star:
+        if name of player's tool is "&cHeart":
+            cancel event
+            set {_lore::*} to lore of player's tool
+            if {_lore::1} is "&1Tier 1":
+                set {_tier} to 1
+            else if {_lore::1} is "&5Tier 2":
+                set {_tier} to 2
+            else:
+                stop
+            execute console command "addheart %player% %{_tier}%"
+            remove 1 nether star named "&cHeart" from player's inventory
+
+on first join:
+    wait 5 ticks
+    send "&2&lWelcome to %{lc::server::name}%"
+    send "&2Be sure to type &l/help&2 to view a list of commands!"
+
+
+on join:
+    wait 5 ticks
+    set {lc::%uuid of player%::waitingfor} to "none"
+    
+on chat:
+    cancel event
+    if {lc::%uuid of player%::waitingfor} isn't "none":
+        set {_type} to {lc::%uuid of player%::waitingfor}
+        if {_type} is "heart_steal_chance":
+            set {_msg} to message parsed as number
+            if {_msg} >= 0:
+                if {_msg} <= 100:
+                    set {lc::settings::heart_steal_chance} to {_msg}
+                    send "&aHeart steal chance set to %{_msg}%"
+                    set {lc::%uuid of player%::waitingfor} to "none"
+                else:
+                    send "&cPlease enter a number between 0 and 100."
+            else:
+                send "&cPlease enter a number between 0 and 100."
+            
+            
+        else if {_type} is "heart_steal_count":
+            set {_msg} to message parsed as number
+            if {_msg} is set:
+                set {lc::settings::heart_steal_count} to {_msg}
+                send "&aHearts lossed on death set to %{_msg}%"
+                set {lc::%uuid of player%::waitingfor} to "none"
+                broadcast "&cYou will now lose &e%{lc::settings::heart_steal_count}% hearts&c on death!"
+    else:
+        broadcast "%player's prefix%&4%player's display name%&f%player's suffix%: %message%"
+
+command /withdraw [<number>]:
+    description: Withdraw a heart
+    usage: /withdraw [count]
+    trigger:
+        set {_count} to arg-1
+        if {_count} isn't set:
+            set {_count} to 1
+        set {_max} to max health of player
+        if {_count} >= {_max}:
+            send "&cYou do not have enough hearts!"
+            stop
+        execute CONSOLE command "remheart %player% %{_count}%"
+        loop {_count} times:
+            set {_item} to a nether star named "&cHeart" with lore "&1Tier 1"
+            set metadata value "tier" of {_item} to 1
+            give {_item} to player
+
+command /forcekill <player> <player>:
+    usage: /forcekill <attacker> <victim>
+    permission: lc.admin.forcekill
+    description: Force a player to kill another player
+    trigger:
+        set {_attacker} to arg-1
+        set {_victim} to arg-2
+
+        kill {_victim}
+        if {lc::settings::allow_heart_loss} is true:
+            if {lc::settings::lose_on} is "player":
+                if {_attacker} is a player:
+                    set {_num} to a random integer between 0 and 100
+                    if {_num} <= {lc::settings::heart_steal_chance}:
+                        if {lc::settings::loss_type} is "drop":
+                            loop {lc::settings::heart_steal_count} times:
+                                drop a nether star named "&cHeart" with lore "&1Tier 1"
+                                set metadata value "tier" of last dropped item to 1
+                        else:
+                            execute CONSOLE command "addheart %{_attacker}% %{lc::settings::heart_steal_count}%"
+                    else:
+                        send "&cYou killed %{_victim}% but didn't gain a heart!" to {_attacker}
+                        send "&2%{_attacker}% killed you but you didn't lose any hearts!" to {_victim}
+        if {server::deathcore::plugins::*} contains "EasyEco":
+            execute CONSOLE command "addcurrency kills 1 %{_attacker}%"
+            execute CONSOLE command "addcurrency cash 100 %{_attacker}%"
+
+every 5 seconds:
+    loop all players:
+        if max health of loop-value < 1:
+            broadcast "&7[&4LifeSteal&7] %loop-value% has been eliminated!"
+            ban loop-value due to "You lost all of your health!" for 7 days
+            kick loop-value due to "You lost all of your health!"
+            set loop-value's max health to 5
+                        
+command /setserver <text>:
+    description: Set the server's name
+    permission: lc.server.setname
+    usage: /setserver <name>
+    trigger:
+        set {_name} to arg-1
+        set {lc::server::name} to {_name}
+        send "&2Changed server name to &e%{lc::server::name}%"
+
+
+command /lchelp:
+    description: View LifeCore commands
+    aliases: helplc, lifecorehelp, lifestealhelp
+    trigger:
+        send "&8&m-----------------------------"
+        send "&2&lLifeCore Help"
+        send "&7Server: &a%{lc::server::name}%"
+        send "&8&m-----------------------------"
+
+        send "&bGeneral"
+        send "&e/withdraw [amount] &7- Withdraw hearts into items"
+        send "&e/sethome &7- Set your home"
+        send "&e/home &7- Teleport to your home (5s, don't move!)"
+        send "&e/rtp &7- Teleport to a random location"
+        send "&e/pw [set|delete|<warp>] &7- Player warp system"
+        send "&e/vault &7- Open your vault"
+        send "&e/vault upgrade &7- Upgrade your vault"
+        send ""
+
+        if {lc::settings::allow_clans} is true:
+            send "&bClans"
+            send "&e/clan create <name> &7- Create a clan"
+            send "&e/clan join <name> &7- Join a clan"
+            send "&e/clan leave &7- Leave your clan"
+            send "&e/clan manage &7- Manage your clan"
+            send "&e/clan transfer <player> &7- Transfer ownership"
+            send "&e/clan invite <player> &7- Invite a player"
+            send "&e/clan applications &7- View applications"
+            send "&e/clan approve <player> &7- Approve application"
+            send "&e/clan reject <player> &7- Reject application"
+            send "&e/clan list &7- List clans"
+            send "&e/clan chat <message> &7- Clan chat"
+            send "&e/clan members &7- View members of your clan"
+            send ""
+
+        send "&bTeleport / TPA"
+        send "&e/tpa <player> &7- Request to teleport to a player (expires 30s)"
+        send "&e/tpahere <player> &7- Request a player to teleport to you (expires 30s)"
+        send "&e/tpaccept &7- Accept a pending teleport request (5s delay)"
+        send "&e/tpdeny &7- Deny a pending teleport request"
+        send "&e/rtp &7- Randomly TP"
+        send "&e/spawn &7- Teleport to the world spawn"
+        send ""
+
+        if player has permission "lc.hearts.addheart":
+            send "&bHeart Management"
+            if player has permission "lc.hearts.addheart":
+                send "&e/addheart <player> [amount] &7- Add hearts"
+            if player has permission "lc.hearts.remheart":
+                send "&e/remheart <player> [amount] &7- Remove hearts"
+            send ""
+        else if player has permission "lc.hearts.remheart":
+            send "&bHeart Management"
+            if player has permission "lc.hearts.addheart":
+                send "&e/addheart <player> [amount] &7- Add hearts"
+            if player has permission "lc.hearts.remheart":
+                send "&e/remheart <player> [amount] &7- Remove hearts"
+            send ""
+
+        send "&bAdmin"
+        if player has permission "lc.panel":
+            send "&e/lc &7- Open LifeCore settings panel"
+        if player has permission "lc.admin.forcekill":
+            send "&e/forcekill <attacker> <victim> &7- Force a kill"
+        if player has permission "lc.server.setname":
+            send "&e/setserver <name> &7- Set server name"
+
+        send "&8&m-----------------------------"
+
+function getClan(p: player) :: string:
+    set {_clan} to {lc::%uuid of {_p}%::clan}
+    if {_clan} is not set:
+        return ""
+    if {lc::clans::%{_clan}%::owner} is uuid of {_p}:
+        return "owner:%{_clan}%"
+    else:
+        return "member:%{_clan}%"
+
+function manageClan(page: number, player: player, item: string = "none"):
+    set {_clanName} to {lc::%uuid of {_player}%::clan}
+    if {_clanName} is not set:
+        send "&cYou are not in a clan!" to {_player}
+        stop
+    if {lc::clans::%{_clanName}%::owner} is not uuid of {_player}:
+        send "&cOnly the clan owner can manage the clan!" to {_player}
+        stop
+
+    if {_page} is 0:
+        set {_inv} to a new chest inventory with 6 rows named "Clan Management - %{_clanName}%"
+        set metadata value "clan" of {_inv} to {_clanName}
+        set slot 0 of {_inv} to barrier named "Close"
+        set slot 10 of {_inv} to {_player}'s skull named "Members" with lore "Click to manage members"
+        set slot 12 of {_inv} to diamond named "Visibility" with lore "Click to change visibility"
+        set {_apps} to size of {lc::clans::%{_clanName}%::applications::*}
+        if {_apps} is 0:
+            set {_appsText} to "No applications"
+        else:
+            set {_appsText} to "%{_apps}% pending"
+        set slot 14 of {_inv} to paper named "Applications" with lore {_appsText}
+        open {_inv} to {_player}
+
+    else if {_page} is 1:
+        set {_inv} to a new chest inventory with 6 rows named "Member Management - %{_clanName}%"
+        set metadata value "clan" of {_inv} to {_clanName}
+        set slot 0 of {_inv} to barrier named "Back"
+        set {_slot} to 9
+        loop {lc::clans::%{_clanName}%::members::*}:
+            if {_slot} > 53:
+                stop
+            set {_uuid} to loop-value
+            set {_member} to {_uuid} parsed as offlineplayer
+            set slot {_slot} of {_inv} to skull of {_member} named "&a%name of {_member}%"
+            add 1 to {_slot}
+        open {_inv} to {_player}
+
+    else if {_page} is 2:
+        set {_inv} to a new chest inventory with 3 rows named "Clan Visibility - %{_clanName}%"
+        set metadata value "clan" of {_inv} to {_clanName}
+        set slot 0 of {_inv} to barrier named "Back"
+        set {_vis} to {lc::clans::%{_clanName}%::visibility}
+        if {_vis} is "public":
+            set slot 4 of {_inv} to book named "Current: Public" with lore "Anyone can join"
+        else if {_vis} is "application":
+            set slot 4 of {_inv} to book named "Current: Applications" with lore "Players must apply"
+        else:
+            set slot 4 of {_inv} to book named "Current: Private" with lore "Invites only"
+        set slot 10 of {_inv} to paper named "Set Private" with lore "Invites only"
+        set slot 13 of {_inv} to paper named "Set Applications" with lore "Players apply"
+        set slot 16 of {_inv} to paper named "Set Public" with lore "Anyone can join"
+        open {_inv} to {_player}
+
+    else if {_page} is 3:
+        if {_item} is "none":
+            send "&cNo member selected!" to {_player}
+            stop
+        set {_inv} to a new chest inventory with 3 rows named "Manage Member: %{_item}%"
+        set slot 0 of {_inv} to barrier named "Back"
+        set slot 10 of {_inv} to red wool named "Kick Member" with lore "Remove this member from the clan"
+        set slot 12 of {_inv} to {_item}'s skull named "%{_item}%"
+        set slot 14 of {_inv} to paper named "Message Member" with lore "Send a message (use /msg)"
+        open {_inv} to {_player}
+
+    else if {_page} is 4:
+        set {_inv} to a new chest inventory with 6 rows named "Applications - %{_clanName}%"
+        set metadata value "clan" of {_inv} to {_clanName}
+        set slot 0 of {_inv} to barrier named "Back"
+        set {_slot} to 9
+        loop {lc::clans::%{_clanName}%::applications::*}:
+            if {_slot} > 53:
+                stop
+            set {_uuid} to loop-value
+            set {_app} to {_uuid} parsed as offlineplayer
+            set slot {_slot} of {_inv} to skull of {_app} named "&e%name of {_app}%"
+            add 1 to {_slot}
+        open {_inv} to {_player}
+
+    else if {_page} is 5:
+        if {_item} is "none":
+            send "&cNo application selected!" to {_player}
+            stop
+        set {_inv} to a new chest inventory with 3 rows named "Manage Application: %{_item}%"
+        set slot 0 of {_inv} to barrier named "Back"
+        set slot 10 of {_inv} to green wool named "Approve" with lore "Approve this application"
+        set slot 12 of {_inv} to {_item}'s skull named "%{_item}%"
+        set slot 14 of {_inv} to red wool named "Reject" with lore "Reject this application"
+        open {_inv} to {_player}
+
+on inventory click:
+    # Clan Management main
+    if name of event-inventory starts with "Clan Management":
+        cancel event
+        if {_clan} is not set:
+            set {_clan} to {lc::%uuid of player%::clan}
+        if event-slot is 0:
+            close player's inventory
+        else if event-slot is 10:
+            manageClan(1, player)
+        else if event-slot is 12:
+            manageClan(2, player)
+        else if event-slot is 14:
+            manageClan(4, player)
+
+    # Member Management list
+    else if name of event-inventory starts with "Member Management":
+        cancel event
+        if event-slot is 0:
+            manageClan(0, player)
+            stop
+        if event-item is a player skull:
+            manageClan(3, player, name of event-item)
+
+    # Manage single member
+    else if name of event-inventory starts with "Manage Member:":
+        cancel event
+        if event-slot is 0:
+            manageClan(1, player)
+            stop
+        if event-slot is 10:
+            set {_name} to name of event-inventory
+            replace all "Manage Member: " in {_name} with ""
+            set {_name} to stripColors({_name})
+            send "&eSelected player: %{_name}%" # debug
+            set {_p} to {_name} parsed as offlineplayer
+            if {_p} is not set:
+                send "&cInvalid player!" to player
+                stop
+            if {lc::clans::%{lc::%uuid of player%::clan}%::owner} is uuid of {_p}:
+                send "&cYou cannot remove the clan owner!" to player
+                stop
+            set {_clan} to {lc::%uuid of player%::clan}
+            remove uuid of {_p} from {lc::clans::%{_clan}%::members::*}
+            delete {lc::%uuid of {_p}%::clan}
+            send "&2Removed &e%name of {_p}% &2from the clan!" to player
+            close player's inventory
+
+
+
+    # Clan Visibility menu
+    else if name of event-inventory starts with "Clan Visibility":
+        set {_clan} to {lc::%uuid of player%::clan}
+        cancel event
+        if event-slot is 0:
+            manageClan(0, player)
+            stop
+        if event-slot is 10:
+            set {lc::clans::%{_clan}%::visibility} to "private"
+            manageClan(2, player)
+        else if event-slot is 13:
+            set {lc::clans::%{_clan}%::visibility} to "application"
+            manageClan(2, player)
+        else if event-slot is 16:
+            set {lc::clans::%{_clan}%::visibility} to "public"
+            manageClan(2, player)
+
+    # Applications list
+    else if name of event-inventory starts with "Applications":
+        cancel event
+        if event-slot is 0:
+            manageClan(0, player)
+            stop
+        if event-item is a player skull:
+            manageClan(5, player, name of event-item)
+
+    # Manage Application (approve/reject)
+    else if name of event-inventory starts with "Manage Application:":
+        cancel event
+        if event-slot is 0:
+            manageClan(4, player)
+            stop
+        set {_target} to name of event-item parsed as offlineplayer
+        set {_clan} to {lc::%uuid of player%::clan}
+        if event-slot is 10: # Approve
+            make player execute command "clan approve %{_target}%"
+            manageClan(4, player)
+        else if event-slot is 14: # Reject
+            make player execute command "clan reject %{_target}%"
+            manageClan(4, player)
+every 3 seconds:
+    loop all players:
+        set {_clan} to {lc::%uuid of loop-player%::clan}
+        set prefix of loop-value to "&7[&e%{_clan}%&7] "
+
+
+command /clan <text> [<text>]:
+    description: Clan management
+    usage: /clan <create|join|leave|manage|transfer|list|delete|chat|invite|applications|approve|reject|members> [name|player|message]
+    trigger:
+        set {_sub} to arg-1
+        set {_arg} to arg-2
+
+        if {_sub} is "create":
+            if {_arg} is not set:
+                send "&cUsage: /clan create <name>"
+                stop
+            if {lc::%uuid of player%::clan} is set:
+                send "&cYou are already in a clan!"
+                stop
+            if {lc::clans::%{_arg}%::owner} is set:
+                send "&cThat clan already exists!"
+                stop
+            set {lc::clans::%{_arg}%} to {_arg}
+            set {lc::clans::%{_arg}%::owner} to uuid of player
+            add uuid of player to {lc::clans::%{_arg}%::members::*}
+            set {lc::%uuid of player%::clan} to {_arg}
+            set {lc::clans::%{_arg}%::visibility} to "public"
+            set {lc::clans::%{_arg}%::prefix} to "&7[&e%{_arg}%&7] "
+            send "&aClan &e%{_arg}% &acreated!"
+
+        else if {_sub} is "join":
+            if {_arg} is not set:
+                send "&cUsage: /clan join <name>"
+                stop
+            if {lc::%uuid of player%::clan} is set:
+                send "&cYou are already in a clan!"
+                stop
+            if {lc::clans::%{_arg}%::owner} is not set:
+                send "&cThat clan does not exist!"
+                stop
+            set {_vis} to {lc::clans::%{_arg}%::visibility}
+            
+            # Check invites first
+            if {lc::clans::%{_arg}%::invites::*} contains uuid of player:
+                remove uuid of player from {lc::clans::%{_arg}%::invites::*}
+                add uuid of player to {lc::clans::%{_arg}%::members::*}
+                set {lc::%uuid of player%::clan} to {_arg}
+                send "&aYou joined clan &e%{_arg}% &athanks to an invite!"
+                loop {lc::clans::%{_arg}%::members::*}:
+                    set {_m} to loop-value parsed as player
+                    if {_m} is online:
+                        send "&e%player% &ajoined the clan!" to {_m}
+                stop
+
+            # Private check
+            if {_vis} is "private":
+                send "&cThat clan is private and you were not invited!"
+                stop
+
+            # Application check
+            if {_vis} is "application":
+                if {lc::clans::%{_arg}%::applications::*} contains uuid of player:
+                    send "&cYou have already applied to &e%{_arg}%&c."
+                    stop
+                add uuid of player to {lc::clans::%{_arg}%::applications::*}
+                set {_owner} to {lc::clans::%{_arg}%::owner}
+                set {_owner} to {_owner} parsed as player
+                send "&e%player% &ahas applied to join your clan." to {_owner}
+                send "&aYou applied to join &e%{_arg}%&a. Wait for approval."
+                stop
+
+            # Public join
+            add uuid of player to {lc::clans::%{_arg}%::members::*}
+            set {lc::%uuid of player%::clan} to {_arg}
+            send "&aYou joined clan &e%{_arg}%"
+            loop {lc::clans::%{_arg}%::members::*}:
+                set {_m} to loop-value parsed as player
+                if {_m} is online:
+                    send "&e%player% &ajoined the clan!" to {_m}
+
+
+        else if {_sub} is "leave":
+            set {_clan} to {lc::%uuid of player%::clan}
+            if {_clan} is not set:
+                send "&cYou are not in a clan!"
+                stop
+            if {lc::clans::%{_clan}%::owner} is uuid of player:
+                send "&cYou must transfer ownership before leaving!"
+                stop
+            remove uuid of player from {lc::clans::%{_clan}%::members::*}
+            delete {lc::%uuid of player%::clan}
+            send "&cYou left clan &e%{_clan}%"
+            loop {lc::clans::%{_clan}%::members::*}:
+                set {_m} to loop-value parsed as player
+                if {_m} is online:
+                    send "&e%player% &cleft the clan!" to {_m}
+
+        else if {_sub} is "manage":
+            set {_clan} to {lc::%uuid of player%::clan}
+            if {_clan} is not set:
+                send "&cYou are not in a clan!"
+                stop
+            if {lc::clans::%{_clan}%::owner} is not uuid of player:
+                send "&cOnly the clan owner can manage the clan!"
+                stop
+            manageClan(0, player)
+
+        else if {_sub} is "transfer":
+            if {_arg} is not set:
+                send "&cUsage: /clan transfer <player>"
+                stop
+            set {_target} to {_arg} parsed as offline player
+            if {_target} is not set:
+                send "&cThat player does not exist!"
+                stop
+            set {_clan} to {lc::%uuid of player%::clan}
+            if {_clan} is not set:
+                send "&cYou are not in a clan!"
+                stop
+            if {lc::clans::%{_clan}%::owner} is not uuid of player:
+                send "&cOnly the owner can transfer ownership!"
+                stop
+            if {lc::%uuid of {_target}%::clan} is not {_clan}:
+                send "&cThat player is not in your clan!"
+                stop
+            set {lc::clans::%{_clan}%::owner} to uuid of {_target}
+            send "&aOwnership transferred to &e%name of {_target}%"
+            if {_target} is online:
+                send "&aYou are now the owner of clan &e%{_clan}%" to {_target}
+
+        else if {_sub} is "invite":
+            if {_arg} is not set:
+                send "&cUsage: /clan invite <player>"
+                stop
+            set {_target} to {_arg} parsed as offline player
+            if {_target} is not set:
+                send "&cPlayer not found!"
+                stop
+            set {_clan} to {lc::%uuid of player%::clan}
+            if {_clan} is not set:
+                send "&cYou are not in a clan!"
+                stop
+            if {lc::clans::%{_clan}%::owner} is not uuid of player:
+                send "&cOnly the clan owner can invite players!"
+                stop
+            if {lc::%uuid of {_target}%::clan} is set:
+                send "&cThat player is already in a clan!"
+                stop
+            add uuid of {_target} to {lc::clans::%{_clan}%::invites::*}
+            send "&aYou invited &e%name of {_target}% &ato your clan!"
+            if {_target} is online:
+                send "&aYou have been invited to join clan &e%{_clan}%&a. Use &7/clan join %{_clan}%&a to accept." to {_target}
+
+        else if {_sub} is "applications":
+            set {_clan} to {lc::%uuid of player%::clan}
+            if {_clan} is not set:
+                send "&cYou are not in a clan!"
+                stop
+            if {lc::clans::%{_clan}%::owner} is not uuid of player:
+                send "&cOnly the clan owner can view applications!"
+                stop
+            if size of {lc::clans::%{_clan}%::applications::*} is 0:
+                send "&cNo pending applications."
+                stop
+            send "&2Applications for &e%{_clan}%&2:"
+            set {_i} to 1
+            loop {lc::clans::%{_clan}%::applications::*}:
+                set {_p} to loop-value parsed as offline player
+                send "&e%{_i}% &7- &a%name of {_p}% &7- &e/clan approve %name of {_p}% &e/clan reject %name of {_p}%"
+                add 1 to {_i}
+
+        else if {_sub} is "approve":
+            if {_arg} is not set:
+                send "&cUsage: /clan approve <player>"
+                stop
+            set {_target} to {_arg} parsed as offline player
+            if {_target} is not set:
+                send "&cPlayer not found!"
+                stop
+            set {_clan} to {lc::%uuid of player%::clan}
+            if {_clan} is not set:
+                send "&cYou are not in a clan!"
+                stop
+            if {lc::clans::%{_clan}%::owner} is not uuid of player:
+                send "&cOnly the clan owner can approve applications!"
+                stop
+            if {lc::clans::%{_clan}%::applications::*} doesn't contain uuid of {_target}:
+                send "&cThis player has not applied!"
+                stop
+            remove uuid of {_target} from {lc::clans::%{_clan}%::applications::*}
+            add uuid of {_target} to {lc::clans::%{_clan}%::members::*}
+            set {lc::%uuid of {_target}%::clan} to {_clan}
+            send "&aApproved &e%name of {_target}% &ato join the clan!"
+            if {_target} is online:
+                send "&aYour application to join clan &e%{_clan}% &ahas been approved!" to {_target}
+
+        else if {_sub} is "reject":
+            if {_arg} is not set:
+                send "&cUsage: /clan reject <player>"
+                stop
+            set {_target} to {_arg} parsed as offline player
+            if {_target} is not set:
+                send "&cPlayer not found!"
+                stop
+            set {_clan} to {lc::%uuid of player%::clan}
+            if {_clan} is not set:
+                send "&cYou are not in a clan!"
+                stop
+            if {lc::clans::%{_clan}%::owner} is not uuid of player:
+                send "&cOnly the clan owner can reject applications!"
+                stop
+            if {lc::clans::%{_clan}%::applications::*} doesn't contain uuid of {_target}:
+                send "&cThis player has not applied!"
+                stop
+            remove uuid of {_target} from {lc::clans::%{_clan}%::applications::*}
+            send "&cRejected &e%name of {_target}% &7from joining the clan."
+            if {_target} is online:
+                send "&cYour application to join clan &e%{_clan}% &chas been rejected!" to {_target}
+
+        else if {_sub} is "list":
+            send "&2Clans&m------------------"
+            set {_i} to 1
+            loop {lc::clans::*}:
+                set {_clan} to loop-value
+                if {lc::clans::%{_clan}%::visibility} is "private":
+                    continue
+                send "&e%{_i}% &7- &a%{_clan}% &7- %{lc::clans::%{_clan}%::visibility}%"
+                add 1 to {_i}
+            if {_i} is 1:
+                send "&cNo public clans found."
+            send "&2&m-----------------------"
+
+        else if {_sub} is "delete":
+            set {_clan} to {lc::%uuid of player%::clan}
+            if {_clan} is not set:
+                send "&cYou are not in a clan!"
+                stop
+            if {lc::clans::%{_clan}%::owner} is not uuid of player:
+                send "&cOnly the clan owner can delete the clan!"
+                stop
+            loop {lc::clans::%{_clan}%::members::*}:
+                set {_m} to loop-value parsed as player
+                if {_m} is online:
+                    send "&cClan &e%{_clan}% &chas been deleted by the owner!" to {_m}
+            loop {lc::clans::%{_clan}%::members::*}:
+                delete {lc::%loop-value%::clan}
+            delete {lc::clans::%{_clan}%::*}
+            delete {lc::clans::%{_clan}%}
+            send "&aYou have successfully deleted the clan &e%{_clan}%!"
+
+        else if {_sub} is "chat":
+            if {_arg} is not set:
+                send "&cUsage /clan chat <message>"
+                stop
+            set {_clan} to {lc::%uuid of player%::clan}
+            if {_clan} is not set:
+                send "&cYou are not in a clan!"
+                stop
+            loop {lc::clans::%{_clan}%::members::*}:
+                set {_member} to loop-value parsed as player
+                if {_member} is online:
+                    send "&7[&bCLAN&7] &c%player's display name%:&f %{_arg}%" to {_member}
+        else if {_sub} is "members":
+            set {_clan} to {lc::%uuid of player%::clan}
+            if {_clan} isn't set:
+                send "&cYou are not in a clan!"
+                stop
+            set {_members::*} to {lc::clans::%{_clan}%::members::*}
+            set {_owner} to {lc::clans::%{_clan}%::owner} parsed as offlineplayer
+            send "&2Members of clan &e%{_clan}%&2&m-----------------------"
+            send ""
+            send "&2Owner: &e%{_owner}%"
+            send ""
+            send "&3Members&m-----------------"
+            loop {_members::*}:
+                set {_member} to loop-value parsed as offlineplayer
+                send "&2- %{_member}%"
+            send "&3&m------------------------"
+            send "&2&m----------------------------------------------------"
+
+
+        else:
+            send "&cUsage:"
+            send "&7/clan create <name>"
+            send "&7/clan join <name>"
+            send "&7/clan leave"
+            send "&7/clan manage"
+            send "&7/clan transfer <player>"
+            send "&7/clan invite <player>"
+            send "&7/clan applications"
+            send "&7/clan approve <player>"
+            send "&7/clan reject <player>"
+            send "&7/clan list"
+            send "&7/clan delete"
+            send "&7/clan chat <message>"
+
+command /tpa <player>:
+    description: Request to teleport to a player
+    trigger:
+        set {_target} to arg-1
+        if {_target} is not set:
+            send "&cUsage: /tpa <player>"
+            stop
+        if {_target} is player:
+            send "&cYou can't tpa to yourself."
+            stop
+        if {_target} is not online:
+            send "&cThat player is not online."
+            stop
+
+        set {_tuid} to uuid of {_target}
+        if {lc::tpa::%{_tuid}%::from} is set:
+            send "&cThat player already has a pending tp request."
+            stop
+
+        set {lc::tpa::%{_tuid}%::from} to uuid of player
+        set {lc::tpa::%{_tuid}%::type} to "tpa"
+        set {lc::tpa::%{_tuid}%::name} to player's display name
+
+        send "&aTeleport request sent to &e%name of {_target}%&a. It will expire in 30s."
+        send "&e%player% &awants to teleport to you. Type &e/tpaccept &ato accept or &e/tpdeny &ato deny. (30s)" to {_target}
+
+        # expiry after 30s
+        wait 30 seconds
+        # only expire this exact request (ensure same requester)
+        if {lc::tpa::%{_tuid}%::from} is uuid of player:
+            # save name before deleting
+            set {_reqName} to {lc::tpa::%{_tuid}%::name}
+            delete {lc::tpa::%{_tuid}%::*}
+            if {_target} is online:
+                send "&cTeleport request from &e%{_reqName}%&c has expired." to {_target}
+            if player is online:
+                send "&cYour teleport request to &e%name of {_target}%&c has expired."
+
+command /tpahere <player>:
+    description: Request a player to teleport to you
+    trigger:
+        set {_target} to arg-1
+        if {_target} is not set:
+            send "&cUsage: /tpahere <player>"
+            stop
+        if {_target} is player:
+            send "&cYou can't tpahere yourself."
+            stop
+        if {_target} is not online:
+            send "&cThat player is not online."
+            stop
+
+        set {_tuid} to uuid of {_target}
+        if {lc::tpa::%{_tuid}%::from} is set:
+            send "&cThat player already has a pending tp request."
+            stop
+
+        set {lc::tpa::%{_tuid}%::from} to uuid of player
+        set {lc::tpa::%{_tuid}%::type} to "tpahere"
+        set {lc::tpa::%{_tuid}%::name} to player's name
+
+        send "&aTpahere request sent to &e%name of {_target}%&a. It will expire in 30s."
+        send "&e%player% &awants you to teleport to them. Type &e/tpaccept &ato accept or &e/tpdeny &ato deny. (30s)" to {_target}
+
+        # expiry after 30s
+        wait 30 seconds
+        if {lc::tpa::%{_tuid}%::from} is uuid of player:
+            set {_reqName} to {lc::tpa::%{_tuid}%::name}
+            delete {lc::tpa::%{_tuid}%::*}
+            if {_target} is online:
+                send "&cTpahere request from &e%{_reqName}%&c has expired." to {_target}
+            if player is online:
+                send "&cYour tpahere request to &e%name of {_target}%&c has expired."
+
+command /tpaccept:
+    description: Accept a pending tp request
+    trigger:
+        set {_tuid} to uuid of player
+        if {lc::tpa::%{_tuid}%::from} is not set:
+            send "&cYou have no pending teleport requests."
+            stop
+
+        set {_fromUUID} to {lc::tpa::%{_tuid}%::from}
+        set {_type} to {lc::tpa::%{_tuid}%::type}
+        set {_from} to {_fromUUID} parsed as player
+        set {_fromName} to {lc::tpa::%{_tuid}%::name}
+
+        if {_from} is not set:
+            send "&cThe requester is no longer online. Request cancelled."
+            delete {lc::tpa::%{_tuid}%::*}
+            stop
+
+        # TPA -> teleport requester to acceptor after 5s (requester must not move)
+        if {_type} is "tpa":
+            send "&aYou accepted &e%{_fromName}%&a's teleport request. Teleporting them in 5s. Don't move!" to player
+            send "&a%name of player% &ahas accepted your teleport request. Teleporting in 5s. Don't move!" to {_from}
+
+            set {server::%{_fromUUID}%::teleporting} to true
+            # perform teleport
+            send "&aTeleporting &e%name of {_from}% &ato &e%name of player%&a." to {_from}
+            send "&aTeleporting you to &e%name of player% &ato you." to player
+            teleport({_from}, location of player)
+            wait 6 seconds
+            delete {lc::tpa::%{_tuid}%::*}
+            delete {server::%{_fromUUID}%::teleporting}
+
+        # TPAHERE -> teleport acceptor to requester after 5s (acceptor must not move)
+        else if {_type} is "tpahere":
+            send "&aYou accepted &e%{_fromName}%&a's tpahere request. Teleporting you in 5s. Don't move!" to player
+            send "&a%name of player% &ahas accepted your tpahere request. Teleporting them in 5s." to {_from}
+
+            set {server::%{_tuid}%::teleporting} to true
+
+            # perform teleport
+            send "&aTeleporting &e%name of player% &ato &e%name of {_from}%&a." to {_from}
+            send "&aTeleporting you to &e%name of {_from}%&a." to player
+            teleport(player, {_from})
+            wait 6 seconds
+            delete {lc::tpa::%{_tuid}%::*}
+            delete {server::%{_tuid}%::teleporting}
+
+command /tpdeny:
+    description: Deny a pending tp request
+    trigger:
+        set {_tuid} to uuid of player
+        if {lc::tpa::%{_tuid}%::from} is not set:
+            send "&cYou have no pending teleport requests."
+            stop
+
+        set {_fromUUID} to {lc::tpa::%{_tuid}%::from}
+        set {_fromName} to {lc::tpa::%{_tuid}%::name}
+        set {_from} to {_fromUUID} parsed as player
+
+        if {_from} is set:
+            send "&c%name of player% denied your teleport request." to {_from}
+        send "&cYou denied the teleport request from &e%{_fromName}%&c."
+        delete {lc::tpa::%{_tuid}%::*}
+
+
+
+on command "/help":
+    if player doesn't have permission "op":
+        cancel event
+        wait 6 ticks
+        make player execute command "lchelp"
+
+command /sethome:
+    description: Set your home
+    trigger:
+        set {server::%uuid of player%::home} to player's location
+        send "&2Your home has been set."
+
+command /home:
+    description: Teleport home
+    trigger:
+        if {server::%uuid of player%::home} isn't set:
+            send "&cHome is not set!"
+            send "&cSet it with &7/sethome"
+            stop
+        send "&aTeleporting you home..."
+        teleport(player, {server::%uuid of player%::home})
+
+# Cancel teleport when player moves (works for home and tpa timers)
+on player move:
+    set {server::%uuid of player%::newpos} to the player's position
+    if the distance between {server::%uuid of player%::newpos} and {server::%uuid of player%::pos} > 0.1:
+        if {server::%uuid of player%::teleporting} is true:
+            delete {server::%uuid of player%::teleporting}
+            send "&cTeleport cancelled because you moved!"
+        set {server::%uuid of player%::pos} to the player's position
+
+
+on damage of player:
+    if {lc::settings::allow_friendlyfire} isn't true:
+        set {_clan1} to {lc::%uuid of attacker%::clan}
+        set {_clan2} to {lc::%uuid of victim%::clan}
+
+        if {_clan1} is set:
+            if {_clan2} is set:
+                if {_clan1} is {_clan2}:
+                    cancel event
+                    send "&cYou cannot attack clan members!" to attacker
+
+
+# Simple + solid /rtp (Skript 2.6.5 | MC 1.8.8)
+
+command /rtp:
+    description: Randomly teleport
+    cooldown: 120 seconds
+    cooldown message: You must wait %remaining time% before you can /rtp again!
+    trigger:
+        set {_w} to world "{@rtp-world}"
+        if {_w} is not set:
+            send "&cRTP world not found!"
+            stop
+
+        set {_x} to random integer between {@rtp-min} and {@rtp-max}
+        set {_z} to random integer between {@rtp-min} and {@rtp-max}
+
+        if random integer between 1 and 2 is 1:
+            set {_x} to {_x} * -1
+        if random integer between 1 and 2 is 1:
+            set {_z} to {_z} * -1
+        set {_loc} to the location at {_x}, 0, {_z} in world {_w}
+        set {_y} to highest block at {_loc}
+        set {_y} to the y-coord of {_y}
+        add 1 to {_y}
+        set {_loc} to the location at {_x}, {_y}, {_z} in world {_w}
+        send "&aYou are being teleported!"
+        teleport(player,{_loc})
+        
+
+on first join:
+    wait 10 ticks
+    make player execute command "rtp"
+
+# Player Warps (1 warp per player) — fixed for Skript 2.6.5
+
+command /pw [<text>] [<text>]:
+    description: Player warp system
+    trigger:
+        # --------- No args -> list warps ---------
+        if arg-1 is not set:
+            send "&ePlayer Warps:"
+            set {_found} to false
+            loop offlineplayers:
+                set {_warp} to {pw_byplayer::%uuid of loop-value%}
+                if {_warp} is set:
+                    set {_owner} to {pw_warp::%{_warp}%::owner} parsed as offlineplayer
+                    send "&7- &a%{_warp}% &7(&e%{_owner}%&7)"
+                    set {_found} to true
+            if {_found} is false:
+                send "&cNo player warps exist."
+            stop
+
+        # --------- /pw set <warp> ---------
+        if arg-1 is "set":
+            if arg-2 is not set:
+                send "&cUsage: /pw set <name>"
+                stop
+            if {pw_byplayer::%uuid of player%} is set:
+                send "&cYou already have a warp: &e%{pw_byplayer::%uuid of player%}%"
+                stop
+            set {_warp} to arg-2
+            if {pw_warp::%{_warp}%::loc} is set:
+                send "&cWarp &e%{_warp}% &calready exists!"
+                stop
+            set {pw_byplayer::%uuid of player%} to {_warp}
+            set {pw_warp::%{_warp}%::loc} to location of player
+            set {pw_warp::%{_warp}%::name} to {_warp}
+            set {pw_warp::%{_warp}%::owner} to uuid of player
+            send "&aWarp &e%{_warp}% &acreated!"
+            stop
+
+        # --------- /pw delete ---------
+        if arg-1 is "delete":
+            if {pw_byplayer::%uuid of player%} is not set:
+                send "&cYou do not have a warp!"
+                stop
+            set {_warp} to {pw_byplayer::%uuid of player%}
+            delete {pw_byplayer::%uuid of player%}
+            delete {pw_warp::%{_warp}%::*}
+            send "&cWarp &e%{_warp}% &cdeleted!"
+            stop
+
+        # --------- /pw <warp> -> teleport ---------
+        set {_warp} to arg-1
+        if {pw_warp::%{_warp}%::loc} is not set:
+            send "&cWarp &e%{_warp}% &cdoes not exist!"
+            stop
+        send "&aTeleporting to warp &e%{_warp}%..."
+        teleport(player, {pw_warp::%{_warp}%::loc})
+
+
+function teleport(player: player, loc: location):
+    set {server::%uuid of {_player}%::teleporting} to true
+    send "&e&lDON'T MOVE!&2 - Teleporting in 5..." to {_player}
+    wait 1 second
+    if {server::%uuid of {_player}%::teleporting} isn't true:
+        stop
+    send "&e&lDON'T MOVE!&2 - Teleporting in 4..." to {_player}
+    wait 1 second
+    if {server::%uuid of {_player}%::teleporting} isn't true:
+        stop
+    send "&e&lDON'T MOVE!&2 - Teleporting in 3..." to {_player}
+    wait 1 second
+    if {server::%uuid of {_player}%::teleporting} isn't true:
+        stop
+    send "&e&lDON'T MOVE!&2 - Teleporting in 2..." to {_player}
+    wait 1 second
+    if {server::%uuid of {_player}%::teleporting} isn't true:
+        stop
+    send "&e&lDON'T MOVE!&2 - Teleporting in 1..." to {_player}
+    wait 1 second
+    if {server::%uuid of {_player}%::teleporting} isn't true:
+        stop
+    teleport {_player} to {_loc}
+    set {server::%uuid of {_player}%::teleporting} to false
+
+# Vaults
+command /vault [<text>]:
+    description: Open your vault
+    trigger:
+        # Create a virtual chest with 1 row
+        set {_arg} to arg-1
+        if {_arg} isn't set:
+            set {_inv} to a new chest inventory with {lc::vault::%uuid of player%::vaultsize} rows named "Vault - %player%"
+
+            # Restore saved items if they exist
+            set {_i} to 0
+            set {_loop} to {lc::vault::%uuid of player%::vaultsize} * 9
+            loop {_loop} times:
+                if {vault::%uuid of player%::%{_i}%} is set:
+                    set slot {_i} of {_inv} to {vault::%uuid of player%::%{_i}%}
+                    add 1 to {_i}
+
+            open {_inv} to player
+        else if {_arg} is "upgrade":
+            set {_price} to {lc::vault::%uuid of player%::vaultsize} * 500
+            if {eco::currency::cash::%uuid of player%::balance} >= {_price}:
+                add 1 to {lc::vault::%uuid of player%::vaultsize}
+                execute CONSOLE command "remcurrency cash %{_price}% %player%"
+                send "&2Successfully upgraded your vault!"
+                send "&2New vault size: &e%{lc::vault::%uuid of player%::vaultsize} * 9%"
+                stop
+            else:
+                send "&cNot enough money!"
+                send "&cYou need &e%{_price}%&c to buy this!"
+        else:
+            send "&cUsage:"
+            send "&e/vault&7 - View your vault"
+            send "&e/vault upgrade&7 - Upgrade your vault"
+
+
+on inventory close:
+    if name of event-inventory starts with "Vault - ":
+        set {_i} to 0
+        set {_loop} to {lc::vault::%uuid of player%::vaultsize} * 9
+        loop {_loop} times:
+            set {vault::%uuid of player%::%{_i}%} to slot {_i} of event-inventory
+            add 1 to {_i}
+
+command /clearvaults:
+    description: Clear everyone's vaults
+    permission: lc.vault.clearall
+    trigger:
+        loop offlineplayers:
+            delete {vault::%uuid of loop-value%}
+        send "&2Vaults cleared!"
+
+
+on break:
+    if distance between player and spawn is smaller than 25:
+        if player doesn't have permission "spawnprot.bypass":
+            cancel event
+            send "&cYou're too close to spawn to build!"
+on place:
+    if distance between player and spawn is smaller than 25:
+        if player doesn't have permission "spawnprot.bypass":
+            cancel event
+            send "&cYou're too close to spawn to build!"
+
